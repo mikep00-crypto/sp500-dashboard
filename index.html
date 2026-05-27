@@ -462,67 +462,53 @@ async function loadDashboard() {
   try {
     const BASE = 'https://financialmodelingprep.com/stable';
 
-    // Fetch profiles one by one (stable API doesn't support bulk profile)
-    detail.textContent = 'Fetching company profiles…';
-    const profileMap = {};
-    for (let i = 0; i < tickers.length; i += 5) {
-      const chunk = tickers.slice(i, i + 5);
-      await Promise.all(chunk.map(async t => {
-        try {
-          const data = await fetchWithRetry(`${BASE}/profile?symbol=${t}&apikey=${API_KEY}`);
-          const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data);
-          if (item) profileMap[t] = item;
-        } catch(e) { /* skip failed */ }
-      }));
-      detail.textContent = `Fetching profiles… ${Math.min(i+5, tickers.length)}/${tickers.length}`;
+    // Helper: safely fetch and unwrap array response
+    async function safeFetch(url) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const json = await res.json();
+        if (Array.isArray(json)) return json[0] || null;
+        if (json && typeof json === 'object' && !json.message) return json;
+        return null;
+      } catch(e) { return null; }
     }
 
-    // Check key works after first profile batch
-    if (Object.keys(profileMap).length === 0) {
-      throw new Error('HTTP 403 — API key invalid or not yet activated. Check your FMP dashboard.');
+    // Test key first with a single known-working endpoint
+    detail.textContent = 'Verifying API key…';
+    const testRes = await fetch(`${BASE}/profile?symbol=AAPL&apikey=${API_KEY}`);
+    if (!testRes.ok) {
+      const body = await testRes.json().catch(()=>({}));
+      throw new Error(`API key rejected (${testRes.status}). ${body.message || 'Please re-check your key at financialmodelingprep.com'}`);
     }
 
-    // Fetch ratios TTM
-    detail.textContent = 'Fetching valuation ratios…';
-    const ratiosMap = {};
-    for (let i = 0; i < tickers.length; i += 5) {
-      const chunk = tickers.slice(i, i + 5);
+    // Fetch all data in parallel batches of 3 to avoid rate limits
+    const profileMap = {}, ratiosMap = {}, metricsMap = {}, growthMap = {};
+    const BATCH = 3;
+
+    for (let i = 0; i < tickers.length; i += BATCH) {
+      const chunk = tickers.slice(i, i + BATCH);
+      const pct = Math.round((i / tickers.length) * 100);
+      detail.textContent = `Loading data… ${pct}% (${i}/${tickers.length} stocks)`;
+
       await Promise.all(chunk.map(async t => {
-        try {
-          const data = await fetchWithRetry(`${BASE}/ratios-ttm?symbol=${t}&apikey=${API_KEY}`);
-          const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data);
-          if (item) ratiosMap[t] = item;
-        } catch(e) { /* skip */ }
+        const [prof, ratio, metric, growth] = await Promise.all([
+          safeFetch(`${BASE}/profile?symbol=${t}&apikey=${API_KEY}`),
+          safeFetch(`${BASE}/ratios-ttm?symbol=${t}&apikey=${API_KEY}`),
+          safeFetch(`${BASE}/key-metrics-ttm?symbol=${t}&apikey=${API_KEY}`),
+          safeFetch(`${BASE}/financial-growth?symbol=${t}&limit=1&apikey=${API_KEY}`),
+        ]);
+        if (prof)   profileMap[t]  = prof;
+        if (ratio)  ratiosMap[t]   = ratio;
+        if (metric) metricsMap[t]  = metric;
+        if (growth) growthMap[t]   = growth;
       }));
+
+      // Small delay between batches to respect rate limits
+      if (i + BATCH < tickers.length) await new Promise(r => setTimeout(r, 300));
     }
 
-    // Fetch key metrics TTM
-    detail.textContent = 'Fetching key metrics…';
-    const metricsMap = {};
-    for (let i = 0; i < tickers.length; i += 5) {
-      const chunk = tickers.slice(i, i + 5);
-      await Promise.all(chunk.map(async t => {
-        try {
-          const data = await fetchWithRetry(`${BASE}/key-metrics-ttm?symbol=${t}&apikey=${API_KEY}`);
-          const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data);
-          if (item) metricsMap[t] = item;
-        } catch(e) { /* skip */ }
-      }));
-    }
-
-    // Fetch financial growth
-    detail.textContent = 'Fetching growth data…';
-    const growthMap = {};
-    for (let i = 0; i < tickers.length; i += 5) {
-      const chunk = tickers.slice(i, i + 5);
-      await Promise.all(chunk.map(async t => {
-        try {
-          const data = await fetchWithRetry(`${BASE}/financial-growth?symbol=${t}&limit=1&apikey=${API_KEY}`);
-          const item = Array.isArray(data) ? data[0] : (data?.data?.[0] || data);
-          if (item) growthMap[t] = item;
-        } catch(e) { /* skip */ }
-      }));
-    }
+    detail.textContent = 'Building dashboard…';
 
     // Merge all data by ticker
     liveData = {};
@@ -532,38 +518,44 @@ async function loadDashboard() {
       const m = metricsMap[t]  || {};
       const g = growthMap[t]   || {};
 
-      // Helper: try multiple possible field names from old + new API
-      const pick = (...keys) => { for(const k of keys){ const v = r[k]??m[k]??p[k]; if(v!=null) return v; } return null; };
+      // Try multiple field name variants (FMP uses inconsistent naming)
+      const pick = (...keys) => {
+        for (const k of keys) {
+          const v = r[k] ?? m[k] ?? p[k];
+          if (v != null && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v);
+        }
+        return null;
+      };
 
       liveData[t] = {
-        companyName:          p.companyName || p.name || t,
-        sector:               p.sector || '',
-        peRatio:              pick('peRatioTTM','peRatio','pe'),
-        pbRatio:              pick('pbRatioTTM','pbRatio','pb'),
-        evToEbitda:           pick('enterpriseValueOverEBITDATTM','evToEbitda','evEbitda'),
-        pegRatio:             pick('pegRatioTTM','pegRatio','peg'),
-        priceToSalesRatio:    pick('priceToSalesRatioTTM','priceToSalesRatio','ps'),
-        grossProfitMargin:    pick('grossProfitMarginTTM','grossProfitMargin'),
-        operatingProfitMargin:pick('operatingProfitMarginTTM','operatingProfitMargin'),
-        netProfitMargin:      pick('netProfitMarginTTM','netProfitMargin'),
-        returnOnEquity:       pick('returnOnEquityTTM','returnOnEquity','roe'),
-        returnOnAssets:       pick('returnOnAssetsTTM','returnOnAssets','roa'),
-        returnOnCapitalEmployed: pick('returnOnCapitalEmployedTTM','returnOnCapitalEmployed','roic'),
-        revenueGrowth:        g.revenueGrowth ?? g.revenue_growth,
-        epsgrowth:            g.epsgrowth ?? g.eps_growth ?? g.epsGrowth,
-        freeCashFlowGrowth:   g.freeCashFlowGrowth ?? g.free_cash_flow_growth,
-        debtToEquity:         pick('debtToEquityTTM','debtToEquity','de'),
-        currentRatio:         pick('currentRatioTTM','currentRatio'),
-        interestCoverage:     pick('interestCoverageTTM','interestCoverage'),
-        dividendYield:        pick('dividendYieldTTM','dividendYield'),
-        beta:                 p.beta,
+        companyName:           p.companyName || p.name || t,
+        sector:                p.sector || p.industry || '',
+        peRatio:               pick('peRatioTTM','peRatio','priceEarningsRatioTTM'),
+        pbRatio:               pick('pbRatioTTM','pbRatio','priceToBookRatioTTM'),
+        evToEbitda:            pick('enterpriseValueOverEBITDATTM','evToEbitdaTTM','enterpriseValueMultipleTTM'),
+        pegRatio:              pick('pegRatioTTM','priceEarningsToGrowthRatioTTM'),
+        priceToSalesRatio:     pick('priceToSalesRatioTTM','priceSalesRatioTTM'),
+        grossProfitMargin:     pick('grossProfitMarginTTM','grossProfitMargin'),
+        operatingProfitMargin: pick('operatingProfitMarginTTM','operatingProfitMargin'),
+        netProfitMargin:       pick('netProfitMarginTTM','netProfitMargin'),
+        returnOnEquity:        pick('returnOnEquityTTM','roe'),
+        returnOnAssets:        pick('returnOnAssetsTTM','roa'),
+        returnOnCapitalEmployed: pick('returnOnCapitalEmployedTTM','roicTTM','returnOnCapitalEmployed'),
+        revenueGrowth:         g.revenueGrowth != null ? parseFloat(g.revenueGrowth) : null,
+        epsgrowth:             g.epsgrowth != null ? parseFloat(g.epsgrowth) : (g.epsGrowth != null ? parseFloat(g.epsGrowth) : null),
+        freeCashFlowGrowth:    g.freeCashFlowGrowth != null ? parseFloat(g.freeCashFlowGrowth) : null,
+        debtToEquity:          pick('debtToEquityTTM','debtEquityRatioTTM'),
+        currentRatio:          pick('currentRatioTTM'),
+        interestCoverage:      pick('interestCoverageTTM'),
+        dividendYield:         pick('dividendYieldTTM','dividendYieldPercentageTTM'),
+        beta:                  p.beta != null ? parseFloat(p.beta) : null,
       };
     }
 
-    // Check for API errors
-    const firstKey = Object.keys(liveData)[0];
-    if (liveData[firstKey] && Object.values(liveData[firstKey]).filter((_,i)=>i>1).every(v => v == null)) {
-      throw new Error('API returned no data. Key may not be activated yet — check your FMP email confirmation.');
+    // Verify we got real data
+    const loaded = Object.values(profileMap).length;
+    if (loaded === 0) {
+      throw new Error('No data returned. Check your API key or try again in a few minutes.');
     }
 
     document.getElementById('loadingState').style.display = 'none';
