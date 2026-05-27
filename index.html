@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>S&P 500 Top 50 — Live KPI Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #111118;
+    --surface2: #1a1a24;
+    --border: rgba(255,255,255,0.07);
+    --border2: rgba(255,255,255,0.12);
+    --text: #e8e8f0;
+    --muted: #6b6b88;
+    --accent: #7fffb2;
+    --accent2: #ff6b6b;
+    --accent3: #6b9fff;
+    --up: #4ade80;
+    --dn: #f87171;
+    --gold: #fbbf24;
+    --font-head: 'Syne', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(127,255,178,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(127,255,178,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 0 24px 60px; }
+
+  /* Header */
+  header { padding: 40px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+  .header-top { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  h1 { font-family: var(--font-head); font-size: clamp(28px, 4vw, 44px); font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
+  h1 span { color: var(--accent); }
+  .header-meta { font-size: 11px; color: var(--muted); margin-top: 8px; letter-spacing: 0.5px; }
+  .live-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(127,255,178,0.08); border: 1px solid rgba(127,255,178,0.2);
+    color: var(--accent); font-size: 11px; padding: 4px 10px; border-radius: 20px;
+    font-family: var(--font-mono); letter-spacing: 0.5px;
+  }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+  /* API Key Setup */
+  #apiSetup {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    padding: 32px;
+    margin-bottom: 24px;
+    max-width: 600px;
+  }
+  #apiSetup h2 { font-family: var(--font-head); font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+  #apiSetup p { color: var(--muted); font-size: 12px; line-height: 1.7; margin-bottom: 16px; }
+  #apiSetup a { color: var(--accent3); text-decoration: none; }
+  #apiSetup a:hover { text-decoration: underline; }
+  .api-row { display: flex; gap: 8px; }
+  #apiKeyInput {
+    flex: 1; background: var(--bg); border: 1px solid var(--border2); border-radius: 8px;
+    padding: 10px 14px; color: var(--text); font-family: var(--font-mono); font-size: 13px; outline: none;
+  }
+  #apiKeyInput:focus { border-color: rgba(127,255,178,0.4); }
+  #apiKeyInput::placeholder { color: var(--muted); }
+  .btn-primary {
+    background: var(--accent); color: #000; border: none; border-radius: 8px;
+    padding: 10px 20px; font-family: var(--font-head); font-weight: 700; font-size: 13px;
+    cursor: pointer; transition: opacity 0.15s; white-space: nowrap;
+  }
+  .btn-primary:hover { opacity: 0.85; }
+  .btn-secondary {
+    background: transparent; color: var(--muted); border: 1px solid var(--border2); border-radius: 8px;
+    padding: 8px 16px; font-family: var(--font-mono); font-size: 12px; cursor: pointer; transition: all 0.15s;
+  }
+  .btn-secondary:hover { color: var(--text); border-color: var(--border2); }
+
+  /* Loading */
+  #loadingState { text-align: center; padding: 80px 20px; }
+  .spinner { width: 40px; height: 40px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loadingState p { color: var(--muted); font-size: 12px; }
+  #loadingState .load-detail { color: var(--accent); font-size: 11px; margin-top: 8px; min-height: 16px; }
+
+  /* Error */
+  #errorState { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.2); border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; display: none; }
+  #errorState p { color: var(--dn); font-size: 13px; }
+
+  /* Stats bar */
+  .stats-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
+  .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .stat-label { font-size: 10px; color: var(--muted); letter-spacing: 0.8px; text-transform: uppercase; margin-bottom: 6px; }
+  .stat-val { font-family: var(--font-head); font-size: 22px; font-weight: 700; }
+  .stat-val.up { color: var(--up); }
+  .stat-val.dn { color: var(--dn); }
+  .stat-val.gold { color: var(--gold); }
+  .stat-val.blue { color: var(--accent3); }
+
+  /* Controls */
+  .controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 16px; }
+  .search-wrap { position: relative; flex: 1; min-width: 200px; }
+  .search-wrap input {
+    width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px 9px 34px; color: var(--text); font-family: var(--font-mono); font-size: 12px; outline: none;
+  }
+  .search-wrap input:focus { border-color: rgba(127,255,178,0.3); }
+  .search-wrap input::placeholder { color: var(--muted); }
+  .search-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 14px; }
+  select {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 12px; color: var(--text); font-family: var(--font-mono); font-size: 12px; outline: none; cursor: pointer;
+  }
+  select:focus { border-color: rgba(127,255,178,0.3); }
+  select option { background: var(--surface2); }
+  .refresh-btn {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 9px 14px; color: var(--muted); font-size: 12px; cursor: pointer; transition: all 0.15s;
+    font-family: var(--font-mono); display: flex; align-items: center; gap: 6px;
+  }
+  .refresh-btn:hover { color: var(--accent); border-color: rgba(127,255,178,0.3); }
+  .refresh-btn.spinning svg { animation: spin 0.8s linear infinite; }
+
+  /* Tabs */
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border); padding-bottom: 0; }
+  .tab {
+    padding: 8px 16px; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase;
+    border: none; background: none; color: var(--muted); cursor: pointer; font-family: var(--font-mono);
+    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* Table */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    padding: 11px 12px; text-align: right; font-size: 10px; letter-spacing: 0.6px; text-transform: uppercase;
+    color: var(--muted); border-bottom: 1px solid var(--border); background: var(--surface2);
+    white-space: nowrap; cursor: pointer; user-select: none; transition: color 0.15s;
+  }
+  thead th:first-child, thead th:nth-child(2) { text-align: left; }
+  thead th:first-child { width: 40px; }
+  thead th:nth-child(2) { width: 130px; }
+  thead th:hover { color: var(--accent); }
+  thead th.sorted { color: var(--accent); }
+  .sort-arrow { margin-left: 3px; font-size: 9px; }
+  tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; cursor: pointer; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+  tbody tr.expanded { background: var(--surface2); }
+  tbody td { padding: 10px 12px; text-align: right; white-space: nowrap; font-size: 12px; }
+  tbody td:first-child, tbody td:nth-child(2) { text-align: left; }
+  .ticker-cell .tick { font-family: var(--font-head); font-weight: 700; font-size: 13px; color: var(--text); }
+  .ticker-cell .co-name { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .rank { color: var(--muted); font-size: 11px; }
+  .up-val { color: var(--up); }
+  .dn-val { color: var(--dn); }
+  .na-val { color: var(--muted); }
+  .new-pill { display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 3px; background: rgba(127,255,178,0.12); color: var(--accent); margin-left: 4px; vertical-align: middle; letter-spacing: 0.3px; }
+
+  /* Expand row */
+  .expand-row td { padding: 0; }
+  .expand-inner { padding: 16px 20px; background: rgba(10,10,15,0.6); border-top: 1px solid var(--border); }
+  .expand-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .expand-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+  .expand-kpi .lbl { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .expand-kpi .val { font-size: 14px; font-weight: 500; }
+  .yr-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .yr-pill { font-size: 10px; padding: 3px 10px; border-radius: 20px; border: 1px solid var(--border2); color: var(--muted); }
+  .sector-pill { font-size: 10px; padding: 3px 10px; border-radius: 20px; border: 1px solid rgba(107,159,255,0.3); color: var(--accent3); }
+
+  /* No results */
+  .no-results { padding: 60px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+
+  /* Last updated */
+  .last-updated { font-size: 10px; color: var(--muted); margin-top: 12px; text-align: right; letter-spacing: 0.3px; }
+
+  /* Footnote */
+  .footnote { margin-top: 32px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; font-size: 11px; color: var(--muted); line-height: 1.7; }
+  .footnote a { color: var(--accent3); text-decoration: none; }
+  .footnote a:hover { text-decoration: underline; }
+
+  @media (max-width: 600px) {
+    .container { padding: 0 12px 40px; }
+    header { padding: 24px 0 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="header-top">
+      <div>
+        <h1>S&P 500 <span>Top 50</span><br>KPI Dashboard</h1>
+        <p class="header-meta">RANKED BY 3-YEAR CUMULATIVE RETURN &nbsp;·&nbsp; 2023–2025 &nbsp;·&nbsp; LIVE DATA VIA FMP</p>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:10px">
+        <span class="live-badge"><span class="live-dot"></span> LIVE</span>
+        <button class="btn-secondary" id="changeKeyBtn" onclick="showApiSetup()" style="display:none">Change API Key</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- API Setup -->
+  <div id="apiSetup">
+    <h2>Connect Live Data</h2>
+    <p>
+      This dashboard pulls real-time KPIs from <a href="https://financialmodelingprep.com/register" target="_blank">Financial Modeling Prep</a>.
+      Sign up free (no credit card) and paste your API key below.
+      The free tier gives 250 calls/day — enough for daily use.
+    </p>
+    <div class="api-row">
+      <input type="text" id="apiKeyInput" placeholder="Paste your FMP API key here…" />
+      <button class="btn-primary" onclick="saveAndLoad()">Load Dashboard</button>
+    </div>
+    <p style="margin-top:10px;font-size:11px">Your key is saved in your browser's localStorage — never sent anywhere except FMP's API.</p>
+  </div>
+
+  <!-- Error -->
+  <div id="errorState"><p id="errorMsg"></p></div>
+
+  <!-- Loading -->
+  <div id="loadingState" style="display:none">
+    <div class="spinner"></div>
+    <p>Fetching live KPI data…</p>
+    <p class="load-detail" id="loadDetail">Connecting to Financial Modeling Prep…</p>
+  </div>
+
+  <!-- Dashboard (hidden until loaded) -->
+  <div id="dashboard" style="display:none">
+
+    <!-- Stats bar -->
+    <div class="stats-bar" id="statsBar"></div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div class="search-wrap">
+        <span class="search-icon">⌕</span>
+        <input type="text" id="search" placeholder="Search ticker or company…" oninput="render()">
+      </div>
+      <select id="sector" onchange="render()">
+        <option value="">All sectors</option>
+      </select>
+      <select id="kpiSort" onchange="sortBy(this.value)">
+        <option value="ret3y">Sort: 3Y Return</option>
+        <option value="pe">Sort: P/E</option>
+        <option value="roe">Sort: ROE %</option>
+        <option value="netMargin">Sort: Net Margin</option>
+        <option value="revenueGrowth">Sort: Rev Growth</option>
+        <option value="fcfMargin">Sort: FCF Margin</option>
+        <option value="debtEq">Sort: Debt/Equity</option>
+        <option value="beta">Sort: Beta</option>
+      </select>
+      <button class="refresh-btn" id="refreshBtn" onclick="reloadData()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+        </svg>
+        Refresh
+      </button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tab-bar">
+      <button class="tab active" onclick="switchTab('overview',this)">Overview</button>
+      <button class="tab" onclick="switchTab('valuation',this)">Valuation</button>
+      <button class="tab" onclick="switchTab('profitability',this)">Profitability</button>
+      <button class="tab" onclick="switchTab('growth',this)">Growth</button>
+      <button class="tab" onclick="switchTab('health',this)">Health</button>
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table>
+        <thead id="thead"></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="noResults" class="no-results" style="display:none">No stocks match your filter.</div>
+    </div>
+    <p class="last-updated" id="lastUpdated"></p>
+
+    <div class="footnote">
+      ⚡ KPI data sourced live from <a href="https://financialmodelingprep.com" target="_blank">Financial Modeling Prep</a> and updates on each page load or manual refresh. 3-year return figures are based on reported annual returns for 2023, 2024, and 2025. SNDK IPO'd in Feb 2025 so its figure covers 2025 only. This dashboard is for informational purposes only and does not constitute financial advice.
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ─── Top 50 tickers ranked by 3Y cumulative return (2023–2025) ───
+const TICKERS = [
+  {ticker:'CVNA', ret3y:1418, isnew:true,  ret23:1027, ret24:284,  ret25:107,  sector:'Consumer Disc.'},
+  {ticker:'APP',  ret3y:971,  isnew:false, ret23:150,  ret24:713,  ret25:108,  sector:'Technology'},
+  {ticker:'SNDK', ret3y:559,  isnew:true,  ret23:null, ret24:null, ret25:559,  sector:'Technology'},
+  {ticker:'PLTR', ret3y:643,  isnew:false, ret23:167,  ret24:341,  ret25:135,  sector:'Technology'},
+  {ticker:'NVDA', ret3y:592,  isnew:false, ret23:239,  ret24:171,  ret25:182,  sector:'Technology'},
+  {ticker:'HOOD', ret3y:419,  isnew:true,  ret23:24,   ret24:192,  ret25:203,  sector:'Financials'},
+  {ticker:'VST',  ret3y:345,  isnew:true,  ret23:72,   ret24:261,  ret25:12,   sector:'Utilities'},
+  {ticker:'WDC',  ret3y:310,  isnew:true,  ret23:14,   ret24:14,   ret25:282,  sector:'Technology'},
+  {ticker:'FIX',  ret3y:298,  isnew:true,  ret23:72,   ret24:106,  ret25:120,  sector:'Industrials'},
+  {ticker:'META', ret3y:289,  isnew:false, ret23:194,  ret24:65,   ret25:30,   sector:'Communication'},
+  {ticker:'MU',   ret3y:268,  isnew:true,  ret23:30,   ret24:-1,   ret25:239,  sector:'Technology'},
+  {ticker:'AVGO', ret3y:258,  isnew:false, ret23:100,  ret24:107,  ret25:51,   sector:'Technology'},
+  {ticker:'GE',   ret3y:255,  isnew:false, ret23:90,   ret24:80,   ret25:85,   sector:'Industrials'},
+  {ticker:'HWM',  ret3y:255,  isnew:true,  ret23:65,   ret24:102,  ret25:88,   sector:'Industrials'},
+  {ticker:'TPR',  ret3y:251,  isnew:true,  ret23:77,   ret24:78,   ret25:96,   sector:'Consumer Disc.'},
+  {ticker:'GEV',  ret3y:249,  isnew:true,  ret23:null, ret24:150,  ret25:99,   sector:'Industrials'},
+  {ticker:'TPL',  ret3y:238,  isnew:true,  ret23:80,   ret24:113,  ret25:45,   sector:'Energy'},
+  {ticker:'UAL',  ret3y:235,  isnew:true,  ret23:20,   ret24:135,  ret25:80,   sector:'Industrials'},
+  {ticker:'RCL',  ret3y:230,  isnew:true,  ret23:162,  ret24:50,   ret25:18,   sector:'Consumer Disc.'},
+  {ticker:'STX',  ret3y:221,  isnew:true,  ret23:1,    ret24:1,    ret25:219,  sector:'Technology'},
+  {ticker:'NFLX', ret3y:243,  isnew:false, ret23:65,   ret24:88,   ret25:90,   sector:'Communication'},
+  {ticker:'APH',  ret3y:205,  isnew:true,  ret23:45,   ret24:65,   ret25:95,   sector:'Technology'},
+  {ticker:'CRWD', ret3y:204,  isnew:false, ret23:145,  ret24:-3,   ret25:62,   sector:'Technology'},
+  {ticker:'CEG',  ret3y:198,  isnew:true,  ret23:80,   ret24:88,   ret25:30,   sector:'Utilities'},
+  {ticker:'ANET', ret3y:191,  isnew:false, ret23:85,   ret24:88,   ret25:18,   sector:'Technology'},
+  {ticker:'CCL',  ret3y:188,  isnew:true,  ret23:133,  ret24:45,   ret25:10,   sector:'Consumer Disc.'},
+  {ticker:'TRGP', ret3y:188,  isnew:true,  ret23:55,   ret24:105,  ret25:28,   sector:'Energy'},
+  {ticker:'UBER', ret3y:177,  isnew:false, ret23:149,  ret24:10,   ret25:18,   sector:'Consumer Disc.'},
+  {ticker:'LRCX', ret3y:177,  isnew:true,  ret23:48,   ret24:-8,   ret25:137,  sector:'Technology'},
+  {ticker:'NOW',  ret3y:172,  isnew:false, ret23:90,   ret24:47,   ret25:35,   sector:'Technology'},
+  {ticker:'BLDR', ret3y:172,  isnew:true,  ret23:157,  ret24:30,   ret25:-15,  sector:'Industrials'},
+  {ticker:'KLAC', ret3y:162,  isnew:true,  ret23:55,   ret24:14,   ret25:93,   sector:'Technology'},
+  {ticker:'PANW', ret3y:161,  isnew:false, ret23:111,  ret24:15,   ret25:35,   sector:'Technology'},
+  {ticker:'WBD',  ret3y:159,  isnew:true,  ret23:-7,   ret24:-7,   ret25:173,  sector:'Communication'},
+  {ticker:'NEM',  ret3y:148,  isnew:true,  ret23:-10,  ret24:-10,  ret25:168,  sector:'Materials'},
+  {ticker:'ISRG', ret3y:151,  isnew:false, ret23:68,   ret24:55,   ret25:28,   sector:'Healthcare'},
+  {ticker:'AMD',  ret3y:142,  isnew:false, ret23:128,  ret24:-8,   ret25:22,   sector:'Technology'},
+  {ticker:'PHM',  ret3y:135,  isnew:true,  ret23:127,  ret24:20,   ret25:-12,  sector:'Consumer Disc.'},
+  {ticker:'ORCL', ret3y:130,  isnew:false, ret23:24,   ret24:68,   ret25:38,   sector:'Technology'},
+  {ticker:'CRM',  ret3y:130,  isnew:false, ret23:100,  ret24:22,   ret25:8,    sector:'Technology'},
+  {ticker:'AMZN', ret3y:124,  isnew:false, ret23:80,   ret24:44,   ret25:0,    sector:'Consumer Disc.'},
+  {ticker:'INTC', ret3y:114,  isnew:true,  ret23:90,   ret24:-60,  ret25:84,   sector:'Technology'},
+  {ticker:'WMT',  ret3y:114,  isnew:false, ret23:15,   ret24:77,   ret25:22,   sector:'Consumer Staples'},
+  {ticker:'GLW',  ret3y:119,  isnew:true,  ret23:-15,  ret24:50,   ret25:84,   sector:'Technology'},
+  {ticker:'JPM',  ret3y:118,  isnew:false, ret23:30,   ret24:48,   ret25:40,   sector:'Financials'},
+  {ticker:'INTC', ret3y:114,  isnew:true,  ret23:90,   ret24:-60,  ret25:84,   sector:'Technology'},
+  {ticker:'HII',  ret3y:102,  isnew:true,  ret23:12,   ret24:8,    ret25:82,   sector:'Industrials'},
+  {ticker:'GS',   ret3y:102,  isnew:false, ret23:12,   ret24:52,   ret25:38,   sector:'Financials'},
+  {ticker:'COST', ret3y:98,   isnew:false, ret23:48,   ret24:42,   ret25:8,    sector:'Consumer Staples'},
+  {ticker:'CDNS', ret3y:85,   isnew:false, ret23:48,   ret24:12,   ret25:25,   sector:'Technology'},
+];
+
+// Deduplicate
+const seen = new Set();
+const TICKER_LIST = TICKERS.filter(t => { if(seen.has(t.ticker)) return false; seen.add(t.ticker); return true; });
+
+const TABS = {
+  overview:     ['ret3y','peRatio','roe','revenueGrowth','netMargin'],
+  valuation:    ['peRatio','pbRatio','evToEbitda','pegRatio','priceToSalesRatio'],
+  profitability:['grossProfitMargin','operatingProfitMargin','netProfitMargin','roe','roa','roic'],
+  growth:       ['revenueGrowth','epsgrowth','freeCashFlowGrowth'],
+  health:       ['debtToEquity','currentRatio','interestCoverage','dividendYield','beta'],
+};
+
+const LABELS = {
+  ret3y:'3Y Return',
+  peRatio:'P/E', pbRatio:'P/B', evToEbitda:'EV/EBITDA', pegRatio:'PEG', priceToSalesRatio:'P/S',
+  grossProfitMargin:'Gross Margin', operatingProfitMargin:'Op Margin', netProfitMargin:'Net Margin', netMargin:'Net Margin',
+  roe:'ROE', roa:'ROA', roic:'ROIC',
+  revenueGrowth:'Rev Growth', epsgrowth:'EPS Growth', freeCashFlowGrowth:'FCF Growth',
+  debtToEquity:'D/E', currentRatio:'Current Ratio', interestCoverage:'Int Coverage',
+  dividendYield:'Div Yield', beta:'Beta',
+};
+
+const PCT_FIELDS = new Set(['ret3y','grossProfitMargin','operatingProfitMargin','netProfitMargin','netMargin','roe','roa','roic','revenueGrowth','epsgrowth','freeCashFlowGrowth','dividendYield']);
+const POS_GOOD  = new Set(['ret3y','grossProfitMargin','operatingProfitMargin','netProfitMargin','netMargin','roe','roa','roic','revenueGrowth','epsgrowth','freeCashFlowGrowth','currentRatio','interestCoverage','dividendYield']);
+
+let liveData = {};
+let currentTab = 'overview';
+let sortKey = 'ret3y';
+let sortDir = -1;
+let openRow = null;
+let API_KEY = '';
+
+function fmt(v, k) {
+  if (v == null || v === undefined || isNaN(v)) return '<span class="na-val">—</span>';
+  const n = parseFloat(v);
+  if (PCT_FIELDS.has(k)) {
+    const pct = Math.abs(n) < 10 ? (n * 100).toFixed(1) : n.toFixed(1);
+    const sign = parseFloat(pct) > 0 ? '+' : '';
+    const cls = POS_GOOD.has(k) ? (parseFloat(pct) >= 0 ? 'up-val' : 'dn-val') : '';
+    return `<span class="${cls}">${sign}${pct}%</span>`;
+  }
+  const cls = '';
+  if (k === 'ret3y') { return `<span class="${n >= 0 ? 'up-val' : 'dn-val'}">${n > 0 ? '+' : ''}${n.toFixed(0)}%</span>`; }
+  return `<span>${n >= 1000 ? n.toFixed(0) : n.toFixed(2)}</span>`;
+}
+
+function getVal(row, k) {
+  if (k === 'ret3y') return row.ret3y;
+  if (k === 'netMargin') return row.netProfitMargin;
+  const live = liveData[row.ticker];
+  if (!live) return null;
+  if (k === 'roe') return live.returnOnEquity;
+  if (k === 'roa') return live.returnOnAssets;
+  if (k === 'roic') return live.returnOnCapitalEmployed;
+  if (k === 'revenueGrowth') return live.revenueGrowth;
+  if (k === 'epsgrowth') return live.epsgrowth;
+  if (k === 'freeCashFlowGrowth') return live.freeCashFlowGrowth;
+  return live[k];
+}
+
+function saveAndLoad() {
+  const key = document.getElementById('apiKeyInput').value.trim();
+  if (!key) { alert('Please enter an API key.'); return; }
+  API_KEY = key;
+  localStorage.setItem('fmp_api_key', key);
+  loadDashboard();
+}
+
+function showApiSetup() {
+  document.getElementById('apiSetup').style.display = '';
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('apiKeyInput').value = API_KEY;
+}
+
+async function fetchWithRetry(url, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.json();
+    } catch(e) {
+      if (i === retries) throw e;
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+}
+
+async function loadDashboard() {
+  document.getElementById('apiSetup').style.display = 'none';
+  document.getElementById('errorState').style.display = 'none';
+  document.getElementById('loadingState').style.display = 'block';
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('changeKeyBtn').style.display = 'block';
+
+  const tickers = TICKER_LIST.map(t => t.ticker);
+  const detail = document.getElementById('loadDetail');
+
+  try {
+    // Batch fetch key metrics (ratios)
+    detail.textContent = 'Fetching valuation ratios…';
+    const ratioChunks = [];
+    for (let i = 0; i < tickers.length; i += 20) {
+      const chunk = tickers.slice(i, i + 20).join(',');
+      const data = await fetchWithRetry(
+        `https://financialmodelingprep.com/api/v3/key-metrics-ttm/${chunk}?apikey=${API_KEY}`
+      );
+      if (Array.isArray(data)) ratioChunks.push(...data);
+    }
+
+    detail.textContent = 'Fetching financial ratios…';
+    const ratioChunks2 = [];
+    for (let i = 0; i < tickers.length; i += 20) {
+      const chunk = tickers.slice(i, i + 20).join(',');
+      const data = await fetchWithRetry(
+        `https://financialmodelingprep.com/api/v3/ratios-ttm/${chunk}?apikey=${API_KEY}`
+      );
+      if (Array.isArray(data)) ratioChunks2.push(...data);
+    }
+
+    detail.textContent = 'Fetching growth metrics…';
+    const growthChunks = [];
+    for (let i = 0; i < tickers.length; i += 20) {
+      const chunk = tickers.slice(i, i + 20).join(',');
+      const data = await fetchWithRetry(
+        `https://financialmodelingprep.com/api/v3/financial-growth/${chunk}?limit=1&apikey=${API_KEY}`
+      );
+      if (Array.isArray(data)) growthChunks.push(...data);
+    }
+
+    detail.textContent = 'Fetching profile data…';
+    const profileChunks = [];
+    for (let i = 0; i < tickers.length; i += 20) {
+      const chunk = tickers.slice(i, i + 20).join(',');
+      const data = await fetchWithRetry(
+        `https://financialmodelingprep.com/api/v3/profile/${chunk}?apikey=${API_KEY}`
+      );
+      if (Array.isArray(data)) profileChunks.push(...data);
+    }
+
+    // Merge all data by ticker
+    liveData = {};
+    for (const t of tickers) {
+      const r1 = ratioChunks.find(d => d.symbol === t) || {};
+      const r2 = ratioChunks2.find(d => d.symbol === t) || {};
+      const g  = growthChunks.find(d => d.symbol === t) || {};
+      const p  = profileChunks.find(d => d.symbol === t) || {};
+      liveData[t] = {
+        companyName:   p.companyName || t,
+        sector:        p.sector || '',
+        peRatio:       r1.peRatioTTM || r2.peRatioTTM,
+        pbRatio:       r1.pbRatioTTM || r2.pbRatioTTM,
+        evToEbitda:    r1.enterpriseValueOverEBITDATTM,
+        pegRatio:      r1.pegRatioTTM,
+        priceToSalesRatio: r2.priceToSalesRatioTTM,
+        grossProfitMargin: r2.grossProfitMarginTTM,
+        operatingProfitMargin: r2.operatingProfitMarginTTM,
+        netProfitMargin: r2.netProfitMarginTTM,
+        returnOnEquity: r2.returnOnEquityTTM,
+        returnOnAssets: r2.returnOnAssetsTTM,
+        returnOnCapitalEmployed: r1.returnOnTangibleAssetsTTM,
+        revenueGrowth: g.revenueGrowth,
+        epsgrowth:     g.epsgrowth,
+        freeCashFlowGrowth: g.freeCashFlowGrowth,
+        debtToEquity:  r1.debtToEquityTTM || r2.debtToEquityTTM,
+        currentRatio:  r1.currentRatioTTM || r2.currentRatioTTM,
+        interestCoverage: r1.interestCoverageTTM,
+        dividendYield: r1.dividendYieldTTM || r2.dividendYieldTTM,
+        beta:          p.beta,
+      };
+    }
+
+    // Check for API errors
+    const firstKey = Object.keys(liveData)[0];
+    if (liveData[firstKey] && Object.values(liveData[firstKey]).every(v => v == null)) {
+      throw new Error('API key may be invalid or rate-limited. Please check your key.');
+    }
+
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    document.getElementById('lastUpdated').textContent = `Last updated: ${new Date().toLocaleString()}`;
+    buildSectorFilter();
+    buildStatsBar();
+    render();
+
+  } catch(e) {
+    document.getElementById('loadingState').style.display = 'none';
+    document.getElementById('errorState').style.display = 'block';
+    document.getElementById('apiSetup').style.display = 'block';
+    document.getElementById('errorMsg').textContent = `Error: ${e.message}. Check your API key or try again.`;
+  }
+}
+
+function buildSectorFilter() {
+  const sectors = [...new Set(TICKER_LIST.map(t => {
+    const live = liveData[t.ticker];
+    return (live && live.sector) ? live.sector : t.sector;
+  }))].sort();
+  const el = document.getElementById('sector');
+  el.innerHTML = '<option value="">All sectors</option>' + sectors.map(s => `<option value="${s}">${s}</option>`).join('');
+}
+
+function buildStatsBar() {
+  const rets = TICKER_LIST.map(t => t.ret3y).filter(v => v != null);
+  const avg = rets.reduce((a,b)=>a+b,0) / rets.length;
+  const top = Math.max(...rets);
+  const topTick = TICKER_LIST.find(t => t.ret3y === top);
+  const profitable = TICKER_LIST.filter(t => {
+    const v = liveData[t.ticker]?.netProfitMargin;
+    return v != null && v > 0;
+  }).length;
+
+  document.getElementById('statsBar').innerHTML = `
+    <div class="stat-card"><div class="stat-label">Top 3Y Return</div><div class="stat-val up">+${top.toFixed(0)}%</div><div style="font-size:10px;color:var(--muted);margin-top:2px">${topTick?.ticker}</div></div>
+    <div class="stat-card"><div class="stat-label">Avg 3Y Return</div><div class="stat-val gold">+${avg.toFixed(0)}%</div></div>
+    <div class="stat-card"><div class="stat-label">Stocks Tracked</div><div class="stat-val blue">${TICKER_LIST.length}</div></div>
+    <div class="stat-card"><div class="stat-label">Profitable (TTM)</div><div class="stat-val up">${profitable}</div><div style="font-size:10px;color:var(--muted);margin-top:2px">of ${TICKER_LIST.length}</div></div>
+  `;
+}
+
+function getFiltered() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const sec = document.getElementById('sector').value;
+  return TICKER_LIST.filter(row => {
+    const name = (liveData[row.ticker]?.companyName || '').toLowerCase();
+    const matchQ = !q || row.ticker.toLowerCase().includes(q) || name.includes(q);
+    const liveSector = liveData[row.ticker]?.sector || row.sector;
+    const matchS = !sec || liveSector === sec || row.sector === sec;
+    return matchQ && matchS;
+  }).sort((a, b) => {
+    const av = getVal(a, sortKey) ?? (sortDir > 0 ? Infinity : -Infinity);
+    const bv = getVal(b, sortKey) ?? (sortDir > 0 ? Infinity : -Infinity);
+    return (av - bv) * sortDir;
+  });
+}
+
+function sortBy(k) {
+  if (sortKey === k) { sortDir *= -1; } else { sortKey = k; sortDir = -1; }
+  document.getElementById('kpiSort').value = k;
+  render();
+}
+
+function switchTab(t, btn) {
+  currentTab = t;
+  document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  render();
+}
+
+function toggleRow(ticker) {
+  openRow = openRow === ticker ? null : ticker;
+  render();
+}
+
+function render() {
+  const data = getFiltered();
+  const cols = TABS[currentTab];
+  const tbody = document.getElementById('tbody');
+  const noR   = document.getElementById('noResults');
+  noR.style.display = data.length ? 'none' : '';
+
+  // Header
+  document.getElementById('thead').innerHTML = `<tr>
+    <th>#</th>
+    <th>Company</th>
+    ${cols.map(k => `<th class="${sortKey===k?'sorted':''}" onclick="sortBy('${k}')">${LABELS[k]||k}${sortKey===k?`<span class="sort-arrow">${sortDir>0?'↑':'↓'}</span>`:''}</th>`).join('')}
+  </tr>`;
+
+  tbody.innerHTML = '';
+  data.forEach((row, i) => {
+    const live = liveData[row.ticker] || {};
+    const name = live.companyName || row.ticker;
+    const isOpen = openRow === row.ticker;
+
+    const tr = document.createElement('tr');
+    tr.className = isOpen ? 'expanded' : '';
+    tr.onclick = () => toggleRow(row.ticker);
+    tr.innerHTML = `
+      <td class="rank">${i+1}</td>
+      <td class="ticker-cell">
+        <div class="tick">${row.ticker}${row.isnew ? '<span class="new-pill">new</span>' : ''}</div>
+        <div class="co-name">${name}</div>
+      </td>
+      ${cols.map(k => `<td>${fmt(getVal(row, k), k)}</td>`).join('')}
+    `;
+    tbody.appendChild(tr);
+
+    if (isOpen) {
+      const allKeys = ['peRatio','pbRatio','evToEbitda','pegRatio','grossProfitMargin','operatingProfitMargin','netProfitMargin','roe','roa','roic','revenueGrowth','epsgrowth','freeCashFlowGrowth','debtToEquity','currentRatio','interestCoverage','dividendYield','beta'];
+      const dr = document.createElement('tr');
+      dr.className = 'expand-row';
+      dr.innerHTML = `<td colspan="${cols.length + 2}">
+        <div class="expand-inner">
+          <div class="expand-grid">
+            ${allKeys.map(k => {
+              const v = getVal(row, k);
+              return `<div class="expand-kpi">
+                <div class="lbl">${LABELS[k]||k}</div>
+                <div class="val">${fmt(v, k)}</div>
+              </div>`;
+            }).join('')}
+          </div>
+          <div class="yr-row">
+            <span class="sector-pill">${live.sector || row.sector}</span>
+            ${row.ret23 != null ? `<span class="yr-pill">2023: ${row.ret23>0?'+':''}${row.ret23}%</span>` : ''}
+            ${row.ret24 != null ? `<span class="yr-pill">2024: ${row.ret24>0?'+':''}${row.ret24}%</span>` : ''}
+            ${row.ret25 != null ? `<span class="yr-pill">2025: ${row.ret25>0?'+':''}${row.ret25}%</span>` : ''}
+          </div>
+        </div>
+      </td>`;
+      tbody.appendChild(dr);
+    }
+  });
+}
+
+async function reloadData() {
+  const btn = document.getElementById('refreshBtn');
+  btn.classList.add('spinning');
+  btn.disabled = true;
+  await loadDashboard();
+  btn.classList.remove('spinning');
+  btn.disabled = false;
+}
+
+// Auto-load if key already saved
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('fmp_api_key');
+  if (saved) {
+    API_KEY = saved;
+    document.getElementById('apiKeyInput').value = saved;
+    loadDashboard();
+  }
+});
+</script>
+</body>
+</html>
